@@ -10,12 +10,11 @@ import requests
 
 DRY_RUN = os.environ.get("DRY_RUN") == "1"
 TOKEN = os.environ.get("DISCORD_TOKEN", "")
-FORUM_ID = os.environ.get("FORUM_CHANNEL_ID", "")
-TAG_NAME = os.environ.get("FORUM_TAG_NAME", "").strip().lower()
+THREAD_ID = os.environ.get("FORUM_THREAD_ID", "").strip()
 SKIP_ADULT = os.environ.get("SKIP_ADULT") == "1"
 
-if not DRY_RUN and not (TOKEN and FORUM_ID):
-    sys.exit("Нужны секреты DISCORD_TOKEN и FORUM_CHANNEL_ID")
+if not DRY_RUN and not (TOKEN and THREAD_ID):
+    sys.exit("Нужны DISCORD_TOKEN и FORUM_THREAD_ID")
 
 RAW = "https://raw.githubusercontent.com/h6rd/Dota2PornFxWeb/main"
 MODS_URL = os.environ.get("MODS_URL") or f"{RAW}/assets/data/mods.json"
@@ -146,14 +145,7 @@ def discord(method: str, path: str, **kwargs):
     raise RuntimeError("Слишком много 429 от Discord")
 
 
-def get_tag_ids() -> list:
-    if not TAG_NAME or DRY_RUN:
-        return []
-    ch = discord("GET", f"/channels/{FORUM_ID}")
-    return [t["id"] for t in ch.get("available_tags", []) if t["name"].strip().lower() == TAG_NAME]
-
-
-def build_payload(e: dict, tag_ids: list) -> dict:
+def build_payload(e: dict) -> dict:
     prefix = "[18+] " if e["adult"] else ""
     embed = {
         "title": (prefix + e["title"])[:256],
@@ -174,16 +166,10 @@ def build_payload(e: dict, tag_ids: list) -> dict:
     buttons = [{"type": 2, "style": 5, "label": label, "url": url} for label, url in e["downloads"][:4]]
     buttons.append({"type": 2, "style": 5, "label": "Открыть на сайте", "url": e["site_link"]})
 
-    body = {
-        "name": (prefix + e["title"])[:100],
-        "message": {
-            "embeds": [embed],
-            "components": [{"type": 1, "components": buttons[:5]}],
-        },
+    return {
+        "embeds": [embed],
+        "components": [{"type": 1, "components": buttons[:5]}],
     }
-    if tag_ids:
-        body["applied_tags"] = tag_ids
-    return body
 
 
 def main():
@@ -217,18 +203,17 @@ def main():
     new.sort(key=lambda e: e["date"])
     print(f"Новых модов: {len(new)}")
 
-    tag_ids = get_tag_ids() if new else []
     for e in new[:MAX_PER_RUN]:
         if e["adult"] and SKIP_ADULT:
             seen.add(e["key"])
             print("Пропущен (18+):", e["title"])
             continue
-        payload = build_payload(e, tag_ids)
+        payload = build_payload(e)
         if DRY_RUN:
             print(json.dumps(payload, ensure_ascii=False, indent=1))
             continue
         try:
-            discord("POST", f"/channels/{FORUM_ID}/threads", json=payload)
+            discord("POST", f"/channels/{THREAD_ID}/messages", json=payload)
             seen.add(e["key"])
             print("Отправлен:", e["title"])
             time.sleep(2)
